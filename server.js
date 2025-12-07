@@ -35,6 +35,121 @@ app.post("/tamara-webhook", async (req, res) => {
       const result = await response.json();
       console.log("Authorise result:", result);
     }
+// =============================
+// TABBY WEBHOOK
+// =============================
+app.post("/tabby-webhook", async (req, res) => {
+  try {
+    const event = req.body;
+    console.log("TABBY Webhook Received:", event);
+
+    const status = event.status;
+    const paymentId = event.id;
+    const orderId = event.order.id;
+
+    console.log("Tabby status:", status);
+    console.log("Order ID:", orderId);
+
+    // حالات تابي التي نحتاجها:
+    // "authorized" = العميل وافق وتم حجز المبلغ
+    // "captured" = تم خصم المبلغ نهائياً
+    // "rejected" = فشل الدفع
+
+    if (status === "authorized") {
+      console.log("Payment Authorized:", paymentId);
+    }
+
+    if (status === "captured") {
+      console.log("Payment Captured Successfully:", paymentId);
+    }
+
+    res.status(200).send("Received");
+  } catch (err) {
+    console.error("Tabby Webhook Error:", err);
+    res.status(500).send("Webhook Error");
+  }
+});
+
+// =============================
+// CAPTURE PAYMENT
+// =============================
+app.post("/tabby-capture", async (req, res) => {
+  const { payment_id, amount } = req.body;
+
+  try {
+    const response = await fetch(`https://api.tabby.ai/api/v2/payments/${payment_id}/capture`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.TABBY_SECRET_KEY}`
+      },
+      body: JSON.stringify({
+        amount: amount
+      })
+    });
+
+    const result = await response.json();
+    console.log("Capture Result:", result);
+    res.status(200).json(result);
+
+  } catch (err) {
+    console.error("Capture Error:", err);
+    res.status(500).json({ error: "Capture Failed" });
+  }
+});
+
+// =============================
+// CANCEL PAYMENT
+// =============================
+app.post("/tabby-cancel", async (req, res) => {
+  const { payment_id } = req.body;
+
+  try {
+    const response = await fetch(`https://api.tabby.ai/api/v2/payments/${payment_id}/cancel`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.TABBY_SECRET_KEY}`
+      }
+    });
+
+    const result = await response.json();
+    console.log("Cancel Result:", result);
+    res.status(200).json(result);
+
+  } catch (err) {
+    console.error("Cancel Error:", err);
+    res.status(500).json({ error: "Cancel Failed" });
+  }
+});
+
+// =============================
+// REFUND PAYMENT
+// =============================
+app.post("/tabby-refund", async (req, res) => {
+  const { payment_id, amount } = req.body;
+
+  try {
+    const response = await fetch(`https://api.tabby.ai/api/v2/payments/${payment_id}/refund`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.TABBY_SECRET_KEY}`
+      },
+      body: JSON.stringify({
+        amount: amount
+      })
+    });
+
+    const result = await response.json();
+    console.log("Refund Result:", result);
+    res.status(200).json(result);
+
+  } catch (err) {
+    console.error("Refund Error:", err);
+    res.status(500).json({ error: "Refund Failed" });
+  }
+});
 
     res.status(200).send("OK");
 
@@ -153,3 +268,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
