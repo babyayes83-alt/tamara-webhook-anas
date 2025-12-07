@@ -1,4 +1,5 @@
 import express from "express";
+import fetch from "node-fetch"; // <<< الحل الأساسي
 
 const app = express();
 app.use(express.json());
@@ -45,7 +46,7 @@ app.post("/tamara-webhook", async (req, res) => {
 });
 
 // ===============================
-// TABBY WEBHOOK — WITH LOGIC
+// TABBY WEBHOOK
 // ===============================
 app.post("/tabby-webhook", async (req, res) => {
   try {
@@ -60,23 +61,7 @@ app.post("/tabby-webhook", async (req, res) => {
     console.log("Payment ID:", paymentId);
     console.log("Order ID:", orderId);
 
-    // ==========================
-    // SIMPLE LOGIC ADDED HERE 
-    // ==========================
-    if (status === "authorized") {
-      console.log("Payment authorized → update your system order to PROCESSING");
-    }
-
-    if (status === "captured") {
-      console.log("Payment captured → update your system order to PAID");
-    }
-
-    if (status === "rejected") {
-      console.log("Payment rejected → mark order FAILED");
-    }
-
-    return res.status(200).send("Tabby Webhook + Logic OK");
-
+    return res.status(200).send("Tabby Webhook OK");
   } catch (err) {
     console.error("Tabby Webhook error:", err);
     return res.status(500).send("Webhook Error");
@@ -84,14 +69,9 @@ app.post("/tabby-webhook", async (req, res) => {
 });
 
 // ===============================
-// HOME PAGE
-// ===============================
 app.get("/", (req, res) => {
   res.send("Webhook server is running.");
 });
 
-// ===============================
-// START SERVER
-// ===============================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
