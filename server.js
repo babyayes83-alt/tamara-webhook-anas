@@ -16,7 +16,7 @@ const TABBY_SECRET_KEY = process.env.TABBY_SECRET_KEY;
 // ===============================
 // EasyOrder API
 // ===============================
-const EASYORDER_API_KEY = "86351433-5419-485a-9729-956367eb2f04"; // tamara API key
+const EASYORDER_API_KEY = "86351433-5419-485a-9729-956367eb2f04";
 const EASYORDER_BASE_URL = "https://public-api.easy-orders.net";
 
 // Update order status in EasyOrder
@@ -51,20 +51,18 @@ app.post("/tamara-webhook", async (req, res) => {
     console.log("Tamara Webhook received:", event);
 
     const orderId = event?.order_id;
+    const reference = event?.order_reference_id; // EasyOrder Order ID
     const eventType = event?.event_type;
-    const reference = event?.order_reference_id; // EasyOrder ID (your system)
 
     if (!reference) {
-      console.log("No EasyOrder ID sent from Tamara");
-      return res.status(200).send("No reference");
+      console.log("Tamara: Missing EasyOrder reference_id");
+      return res.status(200).send("Missing reference_id");
     }
 
-    // ============ حالات تمارا ============
-
+    // Approved → process + update EasyOrder
     if (eventType === "order_approved") {
-      console.log("TAMARA: order approved, authorizing payment...");
+      console.log("TAMARA: Payment approved → Authorizing...");
 
-      // Call Authorise API
       const response = await fetch(
         `${TAMARA_BASE_URL}/orders/${orderId}/authorise`,
         {
@@ -78,30 +76,28 @@ app.post("/tamara-webhook", async (req, res) => {
       );
 
       const result = await response.json();
-      console.log("TAMARA Authorise result:", result);
+      console.log("Tamara Authorise Result:", result);
 
-      // Update EasyOrder → COMPLETED
       await updateEasyOrderStatus(reference, "completed");
+
       return res.status(200).send("Tamara Approved + Synced");
     }
 
+    // Declined
     if (eventType === "order_declined") {
-      console.log("TAMARA: Payment declined");
-
       await updateEasyOrderStatus(reference, "failed");
       return res.status(200).send("Tamara Declined + Synced");
     }
 
+    // Cancelled
     if (eventType === "order_cancelled") {
-      console.log("TAMARA: Order cancelled");
-
       await updateEasyOrderStatus(reference, "cancelled");
       return res.status(200).send("Tamara Cancelled + Synced");
     }
 
     return res.status(200).send("Tamara Webhook OK");
   } catch (err) {
-    console.error("Tamara Webhook error:", err);
+    console.error("Tamara Webhook Error:", err);
     return res.status(500).send("Error");
   }
 });
@@ -112,49 +108,48 @@ app.post("/tamara-webhook", async (req, res) => {
 app.post("/tabby-webhook", async (req, res) => {
   try {
     const event = req.body;
+
     console.log("TABBY Webhook received:", event);
 
     const status = event?.status;
-    const orderId = event?.order?.id; // EasyOrder ID (your system)
+    const reference = event?.reference_id; // EasyOrder Order ID — TRUE MATCH
 
-    if (!orderId) {
-      console.log("Tabby: No EasyOrder Order ID found");
-      return res.status(200).send("Missing order ID");
+    if (!reference) {
+      console.log("Tabby: Missing reference_id (EasyOrder order ID)");
+      return res.status(200).send("Missing reference_id");
     }
 
-    // ============ حالات تابي ============
+    // ============ حالات تابي الجديده ============
 
+    // Authorized → بعد الدفع مباشرة
     if (status === "authorized") {
-      console.log("TABBY: Payment authorized → set to PROCESSING");
-
-      await updateEasyOrderStatus(orderId, "processing");
+      console.log("TABBY: Payment authorized → PROCESSING");
+      await updateEasyOrderStatus(reference, "processing");
       return res.status(200).send("Tabby Authorized + Synced");
     }
 
+    // Captured → تم التحصيل الفعلي
     if (status === "captured") {
       console.log("TABBY: Payment captured → COMPLETED");
-
-      await updateEasyOrderStatus(orderId, "completed");
+      await updateEasyOrderStatus(reference, "completed");
       return res.status(200).send("Tabby Captured + Synced");
     }
 
+    // Rejected
     if (status === "rejected") {
-      console.log("TABBY: Payment rejected");
-
-      await updateEasyOrderStatus(orderId, "failed");
+      await updateEasyOrderStatus(reference, "failed");
       return res.status(200).send("Tabby Rejected + Synced");
     }
 
+    // Expired
     if (status === "expired") {
-      console.log("TABBY: Payment expired");
-
-      await updateEasyOrderStatus(orderId, "expired");
+      await updateEasyOrderStatus(reference, "expired");
       return res.status(200).send("Tabby Expired + Synced");
     }
 
     return res.status(200).send("Tabby Webhook OK");
   } catch (err) {
-    console.error("Tabby Webhook error:", err);
+    console.error("Tabby Webhook Error:", err);
     return res.status(500).send("Webhook Error");
   }
 });
