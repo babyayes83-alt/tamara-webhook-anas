@@ -44,13 +44,14 @@ app.post("/tamara-webhook", async (req, res) => {
   }
 });
 
+
 // ===============================
-// TABBY WEBHOOK
+// TABBY WEBHOOK (WITH LOGIC)
 // ===============================
 app.post("/tabby-webhook", async (req, res) => {
   try {
     const event = req.body;
-    console.log("TABBY Webhook received:", event);
+    console.log("TABBY Webhook received:", JSON.stringify(event, null, 2));
 
     const status = event?.status;
     const paymentId = event?.id;
@@ -60,7 +61,59 @@ app.post("/tabby-webhook", async (req, res) => {
     console.log("Payment ID:", paymentId);
     console.log("Order ID:", orderId);
 
-    return res.status(200).send("Tabby Webhook OK");
+    // EasyOrder API Key
+    const EASYORDER_API = "86351433-5419-485a-9729-956367eb2f04";
+
+    // Function to update EasyOrder status
+    const updateEasyOrder = async (newStatus) => {
+      const response = await fetch("https://public-api.easy-orders.net/api/order/change_status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          api_id: EASYORDER_API,
+          order_id: orderId,
+          status: newStatus
+        })
+      });
+
+      const data = await response.json();
+      console.log("EasyOrder Update Response:", data);
+    };
+
+    // Apply Logic Based on Tabby Status
+    switch (status) {
+      case "authorized":
+        console.log("Payment Authorized → Marking order as processing");
+        await updateEasyOrder("processing");
+        break;
+
+      case "captured":
+        console.log("Payment Captured → Marking order completed");
+        await updateEasyOrder("completed");
+        break;
+
+      case "rejected":
+        console.log("Payment Rejected → Cancelling order");
+        await updateEasyOrder("cancelled");
+        break;
+
+      case "voided":
+      case "expired":
+        console.log("Payment voided/expired → Cancelling order");
+        await updateEasyOrder("cancelled");
+        break;
+
+      case "refunded":
+        console.log("Payment refunded → Marking as refunded");
+        await updateEasyOrder("refunded");
+        break;
+
+      default:
+        console.log("Unknown status → No action");
+    }
+
+    return res.status(200).send("Tabby Webhook + Logic OK");
+
   } catch (err) {
     console.error("Tabby Webhook error:", err);
     return res.status(500).send("Webhook Error");
@@ -68,9 +121,14 @@ app.post("/tabby-webhook", async (req, res) => {
 });
 
 // ===============================
+// Root Endpoint
+// ===============================
 app.get("/", (req, res) => {
   res.send("Webhook server is running.");
 });
 
+// ===============================
+// START SERVER
+// ===============================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
