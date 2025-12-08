@@ -1,30 +1,32 @@
 import express from "express";
 import fetch from "node-fetch";
+import https from "https";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 
-// ===============================
-// Environment Variables
-// ===============================
+// =============== ENV ===============
+const EASYORDER_API_KEY = process.env.EASYORDER_API_KEY;
 const TAMARA_API_KEY = process.env.TAMARA_API_KEY;
-const TAMARA_BASE_URL =
-  process.env.TAMARA_BASE_URL || "https://api-sandbox.tamara.co";
-
+const TAMARA_BASE_URL = process.env.TAMARA_BASE_URL || "https://api-sandbox.tamara.co";
 const TABBY_SECRET_KEY = process.env.TABBY_SECRET_KEY;
 
-// ===============================
-// EasyOrder API
-// ===============================
-const EASYORDER_API_KEY = "86351433-5419-485a-9729-956367eb2f04";
 const EASYORDER_BASE_URL = "https://public-api.easy-orders.net";
 
+// HTTPS agent (Fix socket hangup)
+const agent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 1,
+});
+
+// =============== UPDATE EASYORDER ORDER STATUS ===============
 async function updateEasyOrderStatus(orderId, status) {
   try {
     const url = `${EASYORDER_BASE_URL}/orders/${orderId}`;
 
     const response = await fetch(url, {
       method: "PUT",
+      agent,
       headers: {
         "Content-Type": "application/json",
         "x-api-key": EASYORDER_API_KEY,
@@ -33,38 +35,37 @@ async function updateEasyOrderStatus(orderId, status) {
     });
 
     const data = await response.json();
-    console.log("EasyOrder Update Response:", data);
-
+    console.log("EasyOrder Update:", data);
     return data;
+
   } catch (err) {
     console.error("EasyOrder Update Error:", err);
   }
 }
 
-// ===============================================================
-// TAMARA WEBHOOK
-// ===============================================================
+// ====================== TAMARA WEBHOOK =======================
 app.post("/tamara-webhook", async (req, res) => {
   try {
     const event = req.body;
-    console.log("Tamara Webhook received:", event);
+    console.log("TAMARA Webhook:", JSON.stringify(event, null, 2));
 
-    const orderId = event?.order_id;
-    const reference = event?.order_reference_id; // EasyOrder orderId
-    const eventType = event?.event_type;
+    const referenceId = event?.order_reference_id; // EasyOrder ID
+    const tamaraOrderId = event?.order_id;
+    const type = event?.event_type;
 
-    if (!reference) {
-      console.log("Tamara: Missing EasyOrder reference_id");
-      return res.status(200).send("Missing reference_id");
+    if (!referenceId) {
+      return res.status(200).send("Missing reference");
     }
 
-    if (eventType === "order_approved") {
-      console.log("TAMARA: Payment approved → Authorizing...");
+    // 1) order approved → authorize Tamara
+    if (type === "order_approved") {
+      console.log("TAMARA: Approved → Authorizing...");
 
-      const response = await fetch(
-        `${TAMARA_BASE_URL}/orders/${orderId}/authorise`,
+      const authRes = await fetch(
+        `${TAMARA_BASE_URL}/orders/${tamaraOrderId}/authorise`,
         {
           method: "POST",
+          agent,
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${TAMARA_API_KEY}`,
@@ -73,95 +74,88 @@ app.post("/tamara-webhook", async (req, res) => {
         }
       );
 
-      const result = await response.json();
-      console.log("Tamara Authorise Result:", result);
+      const result = await authRes.json();
+      console.log("Tamara Authorize Result:", result);
 
-      await updateEasyOrderStatus(reference, "completed");
-
-      return res.status(200).send("Tamara Approved + Synced");
+      await updateEasyOrderStatus(referenceId, "completed");
+      return res.status(200).send("Tamara approved + synced");
     }
 
-    if (eventType === "order_declined") {
-      await updateEasyOrderStatus(reference, "failed");
-      return res.status(200).send("Tamara Declined + Synced");
+    // Declined
+    if (type === "order_declined") {
+      await updateEasyOrderStatus(referenceId, "failed");
+      return res.status(200).send("Tamara declined");
     }
 
-    if (eventType === "order_cancelled") {
-      await updateEasyOrderStatus(reference, "cancelled");
-      return res.status(200).send("Tamara Cancelled + Synced");
+    // Cancelled
+    if (type === "order_cancelled") {
+      await updateEasyOrderStatus(referenceId, "cancelled");
+      return res.status(200).send("Tamara cancelled");
     }
 
-    return res.status(200).send("Tamara Webhook OK");
+    return res.status(200).send("TAMARA OK");
+
   } catch (err) {
-    console.error("Tamara Webhook Error:", err);
-    return res.status(500).send("Error");
+    console.error("TAMARA Webhook Error:", err);
+    res.status(500).send("Error");
   }
 });
 
-// ===============================================================
-// TABBY WEBHOOK
-// ===============================================================
+// ====================== TABBY WEBHOOK =======================
 app.post("/tabby-webhook", async (req, res) => {
   try {
     const event = req.body;
 
-    console.log("TABBY Webhook received:", JSON.stringify(event, null, 2));
+    console.log("TABBY Webhook Received:", JSON.stringify(event, null, 2));
 
-    // استخراج رقم الطلب الصحيح من Tabby
     const reference =
-      event?.reference_id ||           // old format
-      event?.order?.reference_id ||    // correct official format
-      event?.order?.id;                // last fallback
+      event?.order?.reference_id ||
+      event?.reference_id ||
+      event?.order?.id;
 
     if (!reference) {
-      console.log("Tabby: Missing reference_id (EasyOrder order ID)");
-      return res.status(200).send("Missing reference_id");
+      return res.status(200).send("Missing reference");
     }
 
     const status = event?.status;
 
     // Authorized
     if (status === "authorized") {
-      console.log("TABBY: Payment authorized → PROCESSING");
       await updateEasyOrderStatus(reference, "processing");
-      return res.status(200).send("Tabby Authorized + Synced");
+      return res.status(200).send("Tabby authorized");
     }
 
     // Captured
-    if (status === "captured") {
-      console.log("TABBY: Payment captured → COMPLETED");
+    if (status === "closed") {  // Tabby = closed
       await updateEasyOrderStatus(reference, "completed");
-      return res.status(200).send("Tabby Captured + Synced");
+      return res.status(200).send("Tabby closed → completed");
     }
 
     // Rejected
     if (status === "rejected") {
       await updateEasyOrderStatus(reference, "failed");
-      return res.status(200).send("Tabby Rejected + Synced");
+      return res.status(200).send("Tabby rejected");
     }
 
     // Expired
     if (status === "expired") {
       await updateEasyOrderStatus(reference, "expired");
-      return res.status(200).send("Tabby Expired + Synced");
+      return res.status(200).send("Tabby expired");
     }
 
-    return res.status(200).send("Tabby Webhook OK");
+    return res.status(200).send("Tabby OK");
+
   } catch (err) {
-    console.error("Tabby Webhook Error:", err);
-    return res.status(500).send("Webhook Error");
+    console.error("TABBY Webhook Error:", err);
+    res.status(500).send("Error");
   }
 });
 
-// ===============================================================
-// SERVER ROOT
-// ===============================================================
+// ====================== ROOT =======================
 app.get("/", (req, res) => {
-  res.send("Webhook server is running.");
+  res.send("Webhook Server Running...");
 });
 
-// ===============================================================
-// RUN SERVER
-// ===============================================================
+// ====================== RUN =======================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on ${PORT}`));
